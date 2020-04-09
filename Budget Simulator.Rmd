@@ -1,0 +1,333 @@
+
+---
+title: "Google Budget Simulator - MCV Analyses"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      toc_collapsed: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 14px;
+  }
+td {  /* Table  */
+  font-size: 14px;
+  
+  
+}
+h1.title {
+  font-size: 26px;
+  color: DarkRed;
+}
+h1 { /* Header 1 */
+  font-size: 20px;
+  color: DarkBlue;
+}
+h2 { /* Header 2 */
+    font-size: 22px;
+  color: DarkBlue;
+}
+h3 { /* Header 3 */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkBlue;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 14px;
+}
+</style>
+
+
+
+The budget simulator shown below is for campaign 
+**p:G|a:BrMTG|^G|#D|d:refinance-general|m:Exact|g:USA|ad:All>HPS** based off a 16 day average of historical data. Caveats are  
+
+*  constant CVR
+*  constant revenue/conversion
+*  CVR,revperconv & CM are all based off the actual historical spend
+
+and these may not hold true in the final version.
+
+# Linear optimization task
+
+Assuming this is an accurate projection of budgets that maximizes the profit, treating this as a linear programming exercise as outlined in the proposal document,each row of data is treated as individual objective functions and maximixed and verified with the suggested optimal CM points, as described below.
+
+* i.e Maximize CM :
+*               CM =  Conversions * Rev/Conversion - Clicks * CPC
+                s.t;  clicks/conversions  <= CVR
+                clicks <= number constrained by your budget
+
+```{r message=FALSE, warning=FALSE, results='asis'}
+require(lpSolve)
+require(tidyverse)
+require(dplyr)
+require(readxl)
+require(formattable)
+
+# Read in budget simulator data
+
+budsim <- read_excel("budsim.xlsx")
+budsim<-budsim%>%mutate(revperconv = `Conv Value`/Conversions,
+                        projectedspend = `Current Daily Budget`*16)
+
+dat<-budsim[1:8,]
+dat$`Current Daily Budget`<-currency(dat$`Current Daily Budget`)
+dat$`Actual Spend (16 day period)`<-currency(dat$`Actual Spend (16 day period)`)
+dat$`Avg Daily Spend`<-currency(dat$`Avg Daily Spend`)
+dat$`Conv Value`<-currency(dat$`Conv Value`)
+dat$CM<-currency(dat$CM)
+dat$CPC<-currency(dat$CPC)
+dat$revperconv<-currency(dat$revperconv)
+dat$projectedspend<-currency(dat$projectedspend)    
+
+
+dat%>%knitr::kable(caption = "Google's Budget Sim Data",floating.environment ="sidewaystable")
+
+maxprofit<-list()
+#### Objective fn : CM = Rev/Conv * Conv - CPC* Clicks ##
+
+for (i in 1:nrow(budsim))
+{
+  objective.in=c(budsim$revperconv[i],-budsim$CPC[i])
+  const.mat=matrix(c(1,-budsim$CVR[i],0,1),nrow = 2,byrow = T)
+  
+  const1 =0
+  const2=budsim$Clicks[i]
+  const.rhs=c(const1,const2)
+  
+  const.dir=c("<=","<=")
+  
+  opt=lp(direction = "max",objective.in,const.mat,const.dir,const.rhs)
+  opt$solution
+  maxprofit[i]<-opt$objval
+}
+
+y<-maxprofit%>%map_df(as_tibble)
+
+y$value<-currency(y$value)
+
+knitr::kable(y,caption = "Optimal CM", floating.environment="sidewaystable")
+
+ggplot(data=budsim,aes(x=`Actual Spend (16 day period)`,y=CM))+ 
+  geom_point()+geom_line()+ ggtitle('CM vs Cost')
+
+```
+
+For the linear approach your optimization is as good as your constraints and objective function.How this could be usable would be to ensure that the campaign historical averages can be aligned with one of the tiers suggested, as opposed to spending the cost associated with the maximum CM.
+
+# Non Linear optimization task
+
+If the budget simulator is what we trust, another approach could be to express the Cost-CM relation as a function. Looking at the plot above, treating it as a linear function would be less that optimal.
+
+So,as an example we try to fit the data provided, to a function and maximize that function that describes the CM-Cost data as given in the budget sim data. As a simple case,in the example below, we use polynomial regression, where the relation can be described as : 
+
+ CM ~ intercept + spend + spend ^2
+
+**Results**
+```{r message=FALSE, warning=FALSE, results='asis'}
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+
+options(scipen=999)
+
+model_data<-budsim%>%select(projectedspend,CM) 
+# Polynomial Regression # CM = intercept + spend + spend ^2
+model<-lm(CM~poly(projectedspend,2,raw=TRUE),data=model_data)
+tab_model(model) 
+
+
+fit_curve<-function(x) (model$coefficients[["(Intercept)"]]) +(model$coefficients[["poly(projectedspend, 2, raw = TRUE)1"]])*x+(model$coefficients[["poly(projectedspend, 2, raw = TRUE)2"]])*x^2
+
+# Optimize the above curve
+
+xmax <- optimize(fit_curve, c(0, 32000), tol = 0.0001, maximum = TRUE)
+maxcost<-floor(xmax$maximum)
+maxcm <- floor(xmax$objective)
+
+
+```
+
+### Results
+
+The Cost-CM relation can be described as
+$f(x)=-49021.84 +  4.987058*x + -0.00009773665*x^2$ 
+
+The point of dimnishing returns(**max cost**) is **`r currency(maxcost)`** and the associated **max CM** is **`r currency(maxcm)`**
+
+Since this is based off only 8 data points the function might not accurately represent how the budget simulator Cost-CM will behave. Collating the data daily and refitting might provide a more appropriate f(x). Additional variables may be used to describe the relation better.
+
+
+# Historical data
+
+At this point I have not been able to fully reconcile the historic values to the budget simulator data - (the budget simulator data was apparently created from 16 days worth of data). Eitherway, if the budget simulator data captures how the historical data for the specific campaign will/should react if the MCV strategy implemented, then choosing a tier that closely aligns with the historical average might be a place to start.
+
+```{r message=FALSE, warning=FALSE, results='asis'}
+
+library(lubridate)
+library(formattable)
+library(kableExtra)
+
+# Read in data 
+
+refinancedata <- read_excel("refinancedata.xlsx", 
+                            col_types = c("date", "numeric", "numeric", 
+                                          "numeric", "numeric", "numeric", 
+                                          "numeric", "numeric", "numeric", 
+                                          "numeric"))
+
+
+startdt <-'2019-10-01'
+enddt<- '2020-02-29'
+
+refinancedata$week<-lubridate::week(ymd(refinancedata$date))
+refinancedata$month<-lubridate::month(ymd(refinancedata$date))
+
+refin <-refinancedata %>% filter(CM > 0)%>%filter(date <= enddt & date >= startdt)%>%
+  arrange(Cost)%>%select(Cost,CM,week,month)
+
+#Plot Cost against CM : all data ; daily
+
+ggplot(refin, aes(x= Cost,y=CM)) + geom_line() + geom_point()  +geom_smooth(method="lm", formula = y~log(x))+ ggtitle("Daily Cost vs CM : Oct -Feb2020")
+
+refinAGG <-refinancedata %>%filter(date< enddt & date > startdt)%>%
+  arrange(Cost)%>%select(Cost,CM,Clicks,Leads,Revenue,week,month)%>%group_by(week)%>%
+  summarize(sumcost=sum(Cost),sumcm=sum(CM),sumclick=sum(Clicks),                                 sumRevenue=sum(Revenue),sumconv=sum(Leads), avgconv=mean(Leads),avgclicks=mean(Clicks),
+ avgRev=mean(Revenue))%>%  mutate(convrate=(sumconv/sumclick)*100,cpc=(sumcost/sumclick),revperconv=sumRevenue/sumconv)
+
+#Plot Cost against CM : all data ; aggregated by week
+
+ggplot(refinAGG, aes(x= sumcost,y=sumcm)) + geom_line() + geom_point() +geom_smooth(method="glm", formula = y~log(x)) + ggtitle("Weekly aggregated Cost vs CM :Oct -Feb2020")
+
+newdat<-refinAGG%>%filter(week <10)
+
+ggplot(newdat, aes(x= sumcost,y=sumcm)) + geom_line() + geom_point() +geom_smooth(method="glm", formula = y~log(x)) + ggtitle("Weekly aggregated Cost vs CM :Jan -Feb2020")
+
+newdat$sumcost<-currency(newdat$sumcost)
+newdat$sumcm<-currency(newdat$sumcm)
+newdat$sumRevenue<-currency(newdat$sumRevenue)
+newdat$avgRev<-currency(newdat$avgRev)
+newdat$cpc<-currency(newdat$cpc)
+newdat$revperconv<-currency(newdat$revperconv)
+
+newdat%>%knitr::kable(caption = "Historical Weekly aggregated data (Jan thru Feb)", floating.environment="sidewaystable")%>%kable_styling(full_width = F)
+
+```
+
+
+```{r message=FALSE, warning=FALSE, results='asis'}
+
+
+# Get average
+
+startdt <-'2020-01-01'
+enddt<- '2020-01-31'
+
+overallavg <-refinancedata %>%filter(date< enddt & date > startdt)%>%
+  arrange(Cost)%>%select(Cost,CM,Clicks,Leads,Revenue,week,month)%>%summarize(sumcost=sum(Cost),sumcm=sum(CM),sumclick=sum(Clicks),sumRevenue=sum(Revenue),                       sumconv=sum(Leads),avgclicks=mean(Clicks),avgRev=mean(Revenue),avgcost=mean(Cost),avgconv=mean(Leads))%>% mutate(convrate=(sumconv/sumclick),cpc=(sumcost/sumclick),revperconv=sumRevenue/sumconv)
+
+
+
+overallavg$sumcost<-currency(overallavg$sumcost)
+overallavg$sumcm<-currency(overallavg$sumcm)
+overallavg$sumRevenue<-currency(overallavg$sumRevenue)
+overallavg$avgRev<-currency(overallavg$avgRev)
+overallavg$cpc<-currency(overallavg$cpc)
+overallavg$revperconv<-currency(overallavg$revperconv)
+overallavg$avgcost<-currency(overallavg$avgcost)
+
+overallavg%>%knitr::kable(caption = "Overall Avg", floating.environment="sidewaystable")%>%kable_styling(full_width = F)
+
+```
+
+So to tie the historical data to the simulator data, we could use the objective function from the tier that aligns well with the historical averages and estimate the CM.
+
+
+```{r message=FALSE, warning=FALSE, results='asis'}
+
+
+dat%>%knitr::kable(caption = "Budget Sim Data")%>%kable_styling(full_width = F)
+
+# Optimize based on historical averages
+ objective.in=c(200.29,-10.21)
+ 
+ const.mat=matrix(c(1,-.099,0,1,1,0),nrow = 3,byrow = T)
+ 
+ const1 = 0
+ const2= 3000
+ const3 = 141
+ const.rhs=c(const1,const2,const3)
+ const.dir=c("<=","<=","<=")
+
+ opt=lp(direction = "max",objective.in,const.mat,const.dir,const.rhs)
+
+maxprofit<-opt$objval
+maxprofit<-currency(maxprofit)
+
+
+```
+### Optimization from historical data
+Objective function : $CM = 200.29(Conversions) - 10.21(Clicks)$
+
+Constrained by: 
+
+ *  $Conversions/Clicks <= 9.9$  
+ *  $Number of Clicks <= 3000$
+ *  $Number of Conversions <= 141$
+ 
+ ie, we try to find the max point of dimnishing return (we want to verify whether it is worth spending the cost for 3000 clicks ie (**`r currency(3000*10.21)`**) but we know average daily conversions are 10.1 i.e for a 2 week window,the total conversions will be 141)
+
+The projected CM is **`r maxprofit`**  and the point of dimnishing return can be obtained if we spent for **`r round(opt$solution[2])`** clicks (**`r currency(opt$solution[2])*10.21`**) as opposed to the cost for 3000 clicks (**`r currency(3000*10.21)`**) that we thought we should spend. 
+
+Perhaps, the averages from the start of the year are not ideal to create these objective functions.
+
+### Applications of Linear programming
+Linear programming works best when you are have able to formulate the right constraints around budgets with the right objective function. For e.g to find whether I can make a revenue twice as much as the cost, or find the point at which this campaign would break even. 
+
+For e.g if my task is to find whether I can make a revenue twice as much as the cost, to yield a profit=cost, lets say $20,000 (So # of clicks=20000/10.21, # of conversions = 40000/200.29)
+
+Objective function : $CM = 200.29(Conversions) - 10.21(Clicks)$
+
+Constrained by: 
+
+ *  $Conversions/Clicks <= 9.9$  
+ *  $Number of Clicks <= 1958$ 
+ *  $Number of Conversions <=200$
+
+```{r message=FALSE, warning=FALSE, results='asis'}
+
+ objective.in=c(200.29,-10.21)
+ 
+ const.mat=matrix(c(1,-.099,0,1,1,0),nrow = 3,byrow = T)
+ 
+ const1 = 0
+ const2= 1958
+ const3 = 199
+ const.rhs=c(const1,const2,const3)
+ const.dir=c("<=","<=","<=")
+
+ opt=lp(direction = "max",objective.in,const.mat,const.dir,const.rhs)
+
+maxprofit<-opt$objval
+maxprofit<-currency(maxprofit)
+
+
+```
+
+The projected CM is **`r maxprofit`** which is not the $20,000 we were testing for. So we can conclude that for this particular campaign given the historical behaviour we can not quite expect that profit return, but if we were to lower our cost,we could be able to. 
+
+
+## Conclusion
+
+There are many approaches we could take, depending on the level of comfort we have with the budget simulator data. As mentioned before, all the metrics were calculated with the historical data, with no clear indication of the CM impact with the increased projectedspend. Further clarification on that might be helpful.
+
+For the teams that used the budget simulator data to test, even though it was a time series test, they found that using tier 5 straight up (daily spend of 1700) yeilded in negative returns, and when they switched to tier 2 it was better performing. However, there was manual  budget adjustment amidst all this, so not completely conclusive.

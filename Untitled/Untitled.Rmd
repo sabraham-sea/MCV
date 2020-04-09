@@ -1,0 +1,90 @@
+---
+title: "A clean and uncluttered template"
+
+output:
+  epuRate::epurate:
+    toc: TRUE
+    number_sections: FALSE
+    code_folding: "hide"
+---
+<style>
+#TOC {
+  top: 1%;
+  opacity: 0.5;
+}
+#TOC:hover {
+  opacity: 1;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(epuRate)
+library(rmarkdown)
+```
+  
+<br><br>
+
+> [R markdown](https://rmarkdown.rstudio.com) creates interactive reports from [R](https://www.r-project.org) code. This post provides a few tips I use on a daily basis to improve the appearance of output documents. In any case, an unavoidable resource is the [Rstudio documentation](https://rmarkdown.rstudio.com/html_document_format.html).
+
+
+
+# Text formating {#text-formatting}
+***
+R markdown allows to easily format your text. You can add [links](www.r-graph-gallery.com), write in **bold** or *italic*. This is very well explained in the [Rstudio cheatsheet](https://www.rstudio.com/wp-content/uploads/2015/02/rmarkdown-cheatsheet.pdf).
+
+Here is the code I used to make this paragraph:
+```{r, eval=FALSE}
+R markdown allows to easily format your text. You can add [links](www.r-graph-gallery.com), write in **bold** or *italic*. This is very well explained in the [Rstudio cheatsheet](https://www.rstudio.com/wp-content/uploads/2015/02/rmarkdown-cheatsheet.pdf).
+```
+
+
+
+# Horizontal lines {#horizontal-line}
+***
+Add an horizontal line by adding 3 stars:
+```{r, eval=FALSE}
+***
+```
+
+***
+
+
+
+# Chapter auto numbering {#auto-numbering}
+***
+Header of level 1, 2, 3 are set using #, ## and ###. You can auto number your chapters using this option in the header:
+```{r, eval=FALSE}
+---
+title: "Your title"
+output: 
+  html_document:
+    number_sections: TRUE
+---
+# Title
+## A subtitle
+## Another subtitle
+# Another title
+```
+
+
+
+# Skip a line {#skip-line}
+***
+I really like to add spaces in my document to give it a more uncluttered look. This is done using the `<br>` command. This `.rmd` code:
+```{r, eval=FALSE}
+A first sentence
+<br><br><br><br>
+A seconde sentence
+```
+
+will give this `html`output:
+
+***
+
+A first sentence
+<br><br><br><br>
+A seconde sentence
+
+***
+
